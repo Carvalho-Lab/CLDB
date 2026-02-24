@@ -37,6 +37,7 @@ def search_filters(db, key):
 			metadata = pd.read_csv('/CLDB/meta/gregor_meta.tsv', sep='\t', index_col=False)
 		if 'CNV' in key:
 			metadata=metadata[metadata['MD_path'].notnull()]
+			metadata = metadata[metadata["CNV_outlier"] == 0]
 		else:
 			metadata=metadata[metadata['P2_path'].notnull()]
 		
@@ -44,6 +45,7 @@ def search_filters(db, key):
 	families = metadata.family.unique()
 	pt_ids = metadata.pt_id.unique()
 	projects = metadata.project.unique()
+
 	n_sub = len(pt_ids)
 
 	if 'CNV' in key: 
@@ -354,7 +356,7 @@ def search_filters(db, key):
 						'',
 						value=gnomad_freq_value,
 						max_value=1.0,
-						step=0.0001,
+						step=0.00001,
 						format='%f',
 						key=f'gnomad-freq-slider-{key}')
 				else: 
@@ -369,7 +371,7 @@ def search_filters(db, key):
 							'',
 							value=TopMED_freq_value,
 							max_value=1.0,
-							step=0.0001,
+							step=0.00001,
 							format='%f',
 							key=f'TopMED-freq-slider-{key}')
 					else: 
@@ -386,8 +388,8 @@ def search_filters(db, key):
 					RefSeq_min, RefSeq_max = st.slider(
 						'',
 						min_value=0,
-						max_value=1000,  # Adjust the max_value according to your data
-						value=(0, 5000),  # Initial range values
+						max_value=28377,  # Adjust the max_value according to your data
+						value=(0, 28377),  # max number based on RefSeq_sorted.bed
 						step=1,
 						key=f'refseq-slider-{key}'
 					)
@@ -401,8 +403,8 @@ def search_filters(db, key):
 					OMIM_min, OMIM_max = st.slider(
 						'',
 						min_value=0,
-						max_value=1000,  # Adjust the max_value according to your data
-						value=(0, 5000),  # Initial range values
+						max_value=4891,  # Adjust the max_value according to your data
+						value=(0, 4891),  # max number based on OMIM_sorted.bed
 						step=1,
 						key=f'OMIM-slider-{key}'
 					)
@@ -575,14 +577,14 @@ def search_build(qry_dict, table):
 	if qry_dict['gnomAD_freq'] is not None:
 		gf1 = qry_dict['gnomAD_freq'][0]
 		gf2 = qry_dict['gnomAD_freq'][1]
-		qry += ' AND gnomAD_AF BETWEEN :gf1 AND :gf2'
+		qry += ' AND gnomad_AF_min BETWEEN :gf1 AND :gf2'
 		params['gf1'] = gf1
 		params['gf2'] = gf2
 
 	if qry_dict['TopMED_freq'] is not None:
 		tm1 = qry_dict['TopMED_freq'][0]
 		tm2 = qry_dict['TopMED_freq'][1]
-		qry += ' AND TopMED_AF BETWEEN :tm1 AND :tm2'
+		qry += ' AND TopMED_AF_min BETWEEN :tm1 AND :tm2'
 		params['tm1'] = tm1
 		params['tm2'] = tm2
 
