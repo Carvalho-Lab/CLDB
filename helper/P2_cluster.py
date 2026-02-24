@@ -8,9 +8,9 @@ from sklearn.cluster import DBSCAN
 from tqdm import tqdm
 from joblib import Parallel, delayed
 
-OUTPUT_NAME='CLDB_P2_hg38_020626.tsv'
-INPUT_PATH='Z:/Members/clun/CLDB/meta/meta_SR_hg38.tsv'
-REF_VER='hg38'
+OUTPUT_NAME='CLDB_P2_hg19_022426.tsv'
+INPUT_PATH='Z:/Members/clun/CLDB/meta/meta_SR_hg19.tsv'
+REF_VER='hg19'
 pd.set_option('display.expand_frame_repr', False)
 
 
@@ -32,7 +32,7 @@ def process_single_file(m_dict):
 		# Note: Indexing by [3], [5], etc. is fast but risky if VCF order varies
 		curr_df['SV_TYPE'] = info_split[3].str.replace('SVTYPE=', '')
 		curr_df['SV_LEN'] = pd.to_numeric(info_split[2].str.replace('AVGLEN=', ''), errors='coerce')
-		curr_df['chrom2'] = info_split[5].str.replace('CHR2=chr', '')
+		curr_df['chrom2'] = info_split[5].str.replace('CHR2=chr', '').str.replace('CHR2=', '')
 		curr_df['pos2'] = pd.to_numeric(info_split[6].str.split('=').str[-1], errors='coerce')
 		curr_df['genotype'] = curr_df['genotype_raw'].str.split(':').str[0]
 		
@@ -91,7 +91,6 @@ def get_P2_df(meta_file, ref_ver):
 			((df['pos1'].between(*artifact_range)) | (df['pos2'].between(*artifact_range)))
 	df = df[~mask]
 
-		
 	df = df.merge(
 		size_df[['Chromosome', 'offset']], 
 		left_on='chrom1', 
