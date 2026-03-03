@@ -6,17 +6,12 @@ import os
 from tqdm import tqdm
 from joblib import Parallel, delayed, parallel_backend
 
-REF_VER = 'hg19'
+REF_VER = 'hg38'
 INPUT_META=f'Z:/Members/clun/CLDB/meta/meta_SR_{REF_VER}.tsv'
 DB_PATH = 'prod_CLDB_SR.sqlite'
 OUTPUT_DIR = f'./data/4.0.0/CLDB_CGR_{REF_VER}'
 
 
-def modify_chr(value):
-    if value.startswith("chr"):
-        return value
-    else:
-        return "chr" + value
 
 def query(pt_id, conn):
     # Use the passed connection instead of creating a new one every time
@@ -24,68 +19,57 @@ def query(pt_id, conn):
     p2 = pd.read_sql(f'SELECT chrom1 AS chr, pos1 AS start, pos2 AS end, SV_ID, SV_TYPE from P2_{REF_VER} where 1=1 AND pt_id = "{pt_id}" AND SV_TYPE != "BND"', conn)
     p2['chr']=p2['chr'].astype(str)
     cnv['chr']=cnv['chr'].astype(str)
+    print(len(cnv))
+    print(len(p2))
     return p2, cnv
 
 def process_cnv(p2, cnv):
     # Filter p2
     p2 = p2[abs(p2['start'] - p2['end']) > 1000]
     p2 = p2.reset_index(drop=True)
+    # print(p2)
     p2_dict={}
     for name, group in p2.groupby('chr'):
         p2_dict[name] = group
-        
     # Process start positions
-    final_idx=[]
+# 2. Map CNV rows to P2 indices
+    final_idx_left = []
+    final_idx_right = []
+
     for idx, row in cnv.iterrows():
-        _chr=row['chr']
-        if _chr not in p2_dict:
-            continue
-
-        abs_diff_start = abs(row['start'] - p2_dict[_chr]['start'])
-        closest_idx_start = abs_diff_start.idxmin()
-        abs_diff_end = abs(row['start'] - p2_dict[_chr]['end'])
-        closest_idx_end = abs_diff_end.idxmin()
-        if  abs_diff_start[closest_idx_start] < abs_diff_end[closest_idx_end]:
-            final_idx.append(closest_idx_start)
-        else:
-            final_idx.append(closest_idx_end)
+        _chr = row['chr']
         
-    if not final_idx: 
-        return pd.DataFrame()
-
-    left_df=p2.iloc[final_idx,]
-    left_df.columns='left_'+left_df.columns
-    # Fix SettingWithCopyWarning by operating on the copy directly or creating a new column properly
-    left_df = left_df.copy() # Ensure it's a copy, not a view
-    left_df['left_width'] = abs(left_df['left_start']-left_df['left_end'])
-    left_df=left_df.reset_index(drop=True)
-    
-    # Process end positions    
-    final_idx=[]
-    for idx, row in cnv.iterrows():
-        _chr=row['chr']
+        # If chromosome is missing, append None to keep the lists aligned with cnv index
         if _chr not in p2_dict:
+            final_idx_left.append(None)
+            final_idx_right.append(None)
             continue
-
-        abs_diff_start = abs(row['end'] - p2_dict[_chr]['start'])
-        closest_idx_start = abs_diff_start.idxmin()
-        abs_diff_end = abs(row['end'] - p2_dict[_chr]['end'])
-        closest_idx_end = abs_diff_end.idxmin()
-        if  abs_diff_start[closest_idx_start] < abs_diff_end[closest_idx_end]:
-            final_idx.append(closest_idx_start)
-        else:
-            final_idx.append(closest_idx_end)
+            
+        # Closest for Start
+        abs_diff_s_s = abs(row['start'] - p2_dict[_chr]['start'])
+        abs_diff_s_e = abs(row['start'] - p2_dict[_chr]['end'])
+        final_idx_left.append(abs_diff_s_s.idxmin() if abs_diff_s_s.min() < abs_diff_s_e.min() else abs_diff_s_e.idxmin())
         
-    right_df=p2.iloc[final_idx,]
-    right_df.columns='right_'+right_df.columns
-    # Fix SettingWithCopyWarning
-    right_df = right_df.copy()
-    right_df['right_width'] = abs(right_df['right_start']- right_df['right_end'])    
-    right_df=right_df.reset_index(drop=True)
+        # Closest for End
+        abs_diff_e_s = abs(row['end'] - p2_dict[_chr]['start'])
+        abs_diff_e_e = abs(row['end'] - p2_dict[_chr]['end'])
+        final_idx_right.append(abs_diff_e_s.idxmin() if abs_diff_e_s.min() < abs_diff_e_e.min() else abs_diff_e_e.idxmin())
 
-    # Re-aligning CNV to match the filtered results if necessary
-    merged_df = pd.concat([cnv.reset_index(drop=True), left_df, right_df], axis=1)
+    # 3. Build the DataFrames using the gathered indices
+    # We use reindex() because it handles None/missing values by filling with NaN automatically
+    left_df = p2.reindex(final_idx_left).reset_index(drop=True)
+    left_df.columns = 'left_' + left_df.columns
     
+    right_df = p2.reindex(final_idx_right).reset_index(drop=True)
+    right_df.columns = 'right_' + right_df.columns
+
+    # 4. Use JOIN
+    # Ensure cnv has a clean index to join against
+    cnv = cnv.reset_index(drop=True)
+    merged_df = cnv.join([left_df, right_df])
+    # 5. Calculations (Vectorized is better than apply here)
+    merged_df['left_width'] = abs(merged_df['left_start'] - merged_df['left_end'])
+    merged_df['right_width'] = abs(merged_df['right_start'] - merged_df['right_end'])
     # Calculate distances
     merged_df['left_dist'] = merged_df.apply(lambda x: min(abs(x['start']-x['left_start']), abs(x['start']-x['left_end'])), axis=1)
     merged_df['right_dist'] = merged_df.apply(lambda x: min(abs(x['start']-x['right_start']), abs(x['start']-x['right_end'])), axis=1)
@@ -100,6 +84,7 @@ def process_cnv(p2, cnv):
     merged_df = merged_df.sort_values(by='chr')
     merged_df.rename(columns={'chr':'chrom1', 'start':'pos1', 'end':'pos2', 'CNV_ID': 'SV_ID', 'CNV_TYPE': 'SV_TYPE', 'CNV_LEN': 'SV_LEN'}, inplace=True)
     return merged_df
+
 
 def worker_task(pt_id, db_path, output_dir):
     output_file = f'{output_dir}/{pt_id}.tsv'
